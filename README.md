@@ -2,6 +2,34 @@
 
 最好用的 sing-box 一键安装脚本 & 管理脚本
 
+# 本 fork 的改动
+
+本仓库是 [233boy/sing-box](https://github.com/233boy/sing-box) 的 fork，在上游基础上增加了可选的**流量统计扩展**（`sb-traffic`：按 VPS 计量额度、节点名显示剩余流量、提供本地订阅地址）。
+
+安装命令与上游用法一致，脚本代码从本 fork 的 release 获取：
+
+```bash
+bash <(wget -qO- -o- https://github.com/W-reverse/sing-box/raw/main/install.sh)
+```
+
+主安装器会自动安装流量统计扩展。扩展需要 Python 3.8+；若系统缺少 Python，主安装仍会正常完成，只提示扩展未安装，之后可手动补装：
+
+```bash
+bash /etc/sing-box/sh/extras/vps-traffic/install.sh
+```
+
+相对上游，本 fork 只改了 3 个文件：
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/core.sh` | 主菜单末尾动态追加“流量统计”入口，原编号不变（13 行） |
+| `install.sh` | 脚本代码来源指向本 fork；安装结束时自动安装扩展 |
+| `src/init.sh` | 同步 `is_sh_repo`，使 `sing-box update sh` 从本 fork 获取脚本 |
+
+其余代码、配置与上游一致。扩展的用法与限制详见 `extras/vps-traffic/README.md`。
+
+> 发布新版本：`is_sh_ver`（`sing-box.sh`）同时是 release 的 tag，推送后由 `.github/workflows/release.yml` 自动打包发布；要让 `sing-box update sh` 能识别到新版本，需先把 `is_sh_ver` 抬高一档再推送。
+
 # 特点
 
 - 快速安装

@@ -5,8 +5,9 @@
 ## 基线与交付范围
 
 - 主仓库：`W-reverse/sing-box`，基线 `2d78583b5aecccb0da0148a816bc1495a284509f`。
-- 新增实现位于 `extras/vps-traffic/`。根据后续菜单整合要求，基线已有文件仅 `src/core.sh` 增加 13 行、一个连续的菜单入口块；其余原文件未修改。这取代首轮“已有文件零修改”的范围记录。
-- 不包装原 `sing-box` 命令；不更改其更新源、版本号、发布流程或代理配置。
+- 新增实现位于 `extras/vps-traffic/`；对上游已有文件的改动共 3 处：`src/core.sh`（菜单入口 13 行）、`install.sh`（脚本来源指向本 fork，并在安装结束时自动安装扩展，失败仅告警）、`src/init.sh`（同步 `is_sh_repo`）。
+- 不包装原 `sing-box` 命令；版本号与发布流程保持不变。`is_sh_repo` 改为指向本 fork，`sing-box update sh` 因此从本 fork 的 release 获取脚本。
+- 后两项属于同日“简化安装”修订（在首次验收之后加入）。该修订已重跑 40 项 unittest 与 Debian 12 容器内的完整安装流程，均通过。
 - 独立 `sb-traffic` 命令、`/opt/sing-box-traffic` 程序、`/etc/sing-box-traffic` 数据和 `sing-box-traffic` 服务。
 - 本轮没有 commit、push，也没有连接或部署用户 VPS。
 

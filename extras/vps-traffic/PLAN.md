@@ -4,7 +4,9 @@
 
 ## 首要约束：方便合并上游
 
-**最小侵入，方便合并上游**：根据后续“整合原终端菜单”的要求，允许仅在 `src/core.sh` 的 `is_main_menu()` 增加一个连续的小入口，动态追加“流量统计”并调用 `sb-traffic menu`。其余实现/文档/测试集中在 `extras/vps-traffic/`。不改 init.sh、sing-box.sh、主安装器、根 README、版本号、release 工作流或更新源，不替换原命令 symlink，不给原卸载器加钩子。这一修订取代首轮“已有文件零修改”的约束。
+**最小侵入，方便合并上游**：根据后续“整合原终端菜单”的要求，允许仅在 `src/core.sh` 的 `is_main_menu()` 增加一个连续的小入口，动态追加“流量统计”并调用 `sb-traffic menu`。其余实现/文档/测试集中在 `extras/vps-traffic/`。不改 sing-box.sh、版本号、release 工作流，不替换原命令 symlink，不给原卸载器加钩子。这一修订取代首轮“已有文件零修改”的约束。
+
+**修订（安装简化，2026-10-09 晚）**：为让安装方式与上游完全一致，放开原“不改主安装器 / 不改更新源”的限制——`install.sh` 与 `src/init.sh` 的 `is_sh_repo` 改指向本 fork（脚本代码取自本 fork 的 release），且主安装器在安装结束时自动调用扩展安装器（缺 Python 等失败仅告警，不中断主安装）。上游已有文件的改动由 1 处增至 3 处，仍各自连续，可单独剔除。
 
 独立命令 `sb-traffic`；独立安装目录 `/opt/sing-box-traffic`；数据目录 `/etc/sing-box-traffic`（0700）；独立服务 `sing-box-traffic`；可显式指定 sing-box 根目录（默认 `/etc/sing-box`），通过隔离适配器读取其配置并复用其生成 URL 的逻辑。扩展安装、更新、卸载与主项目分开；卸载扩展默认保留数据，purge 显式删除。主项目卸载前应停用扩展，文档明确此顺序，不能为了自动钩子侵入原代码。
 

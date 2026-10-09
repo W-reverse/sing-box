@@ -1,11 +1,11 @@
 # sing-box VPS 流量统计扩展（独立安装）
 
-`sb-traffic` 是独立的流量计量、节点改名和远程订阅工具。适配器只 source 主项目的 `sh/src/core.sh`，复用其协议链接生成函数，不 source `init.sh`。为接入原终端菜单，主项目仅在 `src/core.sh` 的 `is_main_menu()` 增加一个小入口；不替换现有命令 symlink，不修改代理配置或主服务。统计实现、交互子菜单和测试仍集中在本目录。
+`sb-traffic` 是独立的流量计量、节点改名和远程订阅工具。适配器只 source 主项目的 `sh/src/core.sh`，复用其协议链接生成函数，不 source `init.sh`。为接入原终端菜单，主项目在 `src/core.sh` 的 `is_main_menu()` 增加一个小入口；不替换现有命令 symlink，不修改代理配置或主服务。统计实现、交互子菜单和测试仍集中在本目录。
 
 ## 要求与安装
 
 - Linux Bash 4+、Python 3.8+、`jq`；原 sing-box 脚本和配置需已存在。Hysteria2 链接沿用上游证书指纹逻辑，需要 `openssl` 和主项目 `bin/tls.cer`。
-- 安装/更新时只复制扩展文件，需 root 权限：
+- 安装/更新时只复制扩展文件，需 root 权限（主安装器会在安装结束时自动调用本安装器；缺少 Python 时只告警，不影响主安装）：
 
 ```sh
 sudo bash extras/vps-traffic/install.sh
@@ -34,9 +34,9 @@ sudo sb-traffic menu
 
 ### 与上游合并
 
-为满足菜单整合，本版本从“原文件零修改”调整为“一个最小菜单入口”：上游已有文件仅 `src/core.sh` 中一个连续改动块（13 行新增）。上游若也修改同一段，仍可能需要处理冲突，不能保证永久零冲突；统计实现与其余上游代码保持隔离。
+为满足菜单整合与安装简化，本版本把改动限制在最小的几处：上游已有文件仅 3 处被修改——`src/core.sh` 的菜单入口（13 行）、`install.sh`（脚本来源指向本 fork，并在安装结束时自动安装扩展）、`src/init.sh`（同步 `is_sh_repo`）。上游若也修改同一位置，仍可能需要处理冲突，不能保证永久零冲突；统计实现与其余上游代码保持隔离。
 
-如果原脚本的更新命令从纯上游下载并覆盖了 `core.sh`，菜单入口可能消失，但 `/opt/sing-box-traffic`、统计数据和 `sb-traffic menu` 不受该覆盖影响。应合并并部署带入口的 fork 版本，不要为了菜单接入重装/删除代理配置。合并后重跑本目录测试。
+`is_sh_repo` 已指向本 fork，`sing-box update sh` 不会再用上游代码覆盖 `core.sh`。但 `sing-box reinstall` 会先卸载（清空 `/etc/sing-box`，含 `conf/`）再重跑安装器，请先 `sb-traffic disable`，重装后再 `sb-traffic enable`；`/opt/sing-box-traffic`、统计数据和 `sb-traffic menu` 不受影响。合并上游后重跑本目录测试。
 
 ## 初次配置与计量口径
 

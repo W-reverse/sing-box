@@ -70,7 +70,7 @@ is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
-is_sh_repo=$author/$is_core
+is_sh_repo=W-reverse/$is_core # fork: own releases
 is_pkg="wget tar bash"
 # Alpine: gcompat provides glibc compatibility for prebuilt binaries
 [[ $cmd =~ apk ]] && is_pkg="$is_pkg gcompat jq"
@@ -453,6 +453,13 @@ main() {
     add reality
     # wait for background tasks (e.g., OpenRC service start)
     wait
+    # optional fork extension: install the traffic statistics extension when shipped in this tree.
+    if [[ -f $is_sh_dir/extras/vps-traffic/install.sh ]]; then
+        msg ok "安装流量统计扩展..."
+        if ! bash $is_sh_dir/extras/vps-traffic/install.sh; then
+            msg warn "流量统计扩展安装失败, 稍后手动重试: bash $is_sh_dir/extras/vps-traffic/install.sh"
+        fi
+    fi
     # remove tmp dir and exit.
     exit_and_del_tmpdir ok
 }
