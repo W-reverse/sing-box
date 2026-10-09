@@ -1600,7 +1600,20 @@ is_main_menu() {
     msg "$is_core_name $is_core_ver: $is_core_status"
     msg "群组(Chat): $(msg_ul https://t.me/tg233boy)"
     is_main_start=1
+    # Optional traffic extension: append dynamically without renumbering upstream entries.
+    local -a mainmenu=("${mainmenu[@]}" "流量统计")
+    local traffic_menu_choice=${#mainmenu[@]}
     ask mainmenu
+    if [[ $REPLY == "$traffic_menu_choice" ]]; then
+        if command -v sb-traffic >/dev/null 2>&1; then
+            sb-traffic menu
+        else
+            msg "\n流量统计扩展尚未安装。请在本 fork 的项目目录运行："
+            msg "  sudo bash extras/vps-traffic/install.sh"
+            msg "安装说明：extras/vps-traffic/README.md\n"
+        fi
+        return
+    fi
     case $REPLY in
     1)
         add
