@@ -30,6 +30,7 @@ class MenuEndToEndTests(unittest.TestCase):
                         SB_TRAFFIC_SYS_ROOT=str(self.base / "sys"),
                         SB_TRAFFIC_PROC_ROOT=str(self.base / "proc"),
                         SB_TRAFFIC_ROOT=str(self.base / "sing-box"),
+                        SB_TRAFFIC_OFFLINE="1",
                         SB_TRAFFIC_HOME=str(EXT), PYTHONDONTWRITEBYTECODE="1")
 
     def run_cli(self, args, inputs=None):
@@ -41,15 +42,16 @@ class MenuEndToEndTests(unittest.TestCase):
         return result
 
     def test_real_wizard_negative_timezone_preservation_and_calibration(self):
-        result = self.run_cli(["menu"], ["2", "eth0", "1TB", "15", "-03:30", "out",
-                                              "加拿大 VPS 名称", "203.0.113.10", "", "120GB", "y", "0"])
+        result = self.run_cli(["menu"], ["2", "1TB", "y", "eth0", "203.0.113.10",
+                                              "加拿大 VPS 名称", "15", "-03:30", "out", "",
+                                              "120GB", "y", "0"])
         self.assertIn("配置已保存", result.stdout)
         self.assertNotIn("操作未成功", result.stdout)
         current = json.loads(self.run_cli(["status", "--json"]).stdout)
         self.assertEqual(current["utc_offset"], "-03:30")
         self.assertEqual(current["name"], "加拿大 VPS 名称")
         self.assertEqual(current["used_bytes"], 120_000_000_000)
-        self.run_cli(["menu"], ["2"] + [""] * 9 + ["y", "0"])
+        self.run_cli(["menu"], ["2", "", "", "", "y", "0"])
         unchanged = json.loads(self.run_cli(["status", "--json"]).stdout)
         self.assertEqual(unchanged["used_bytes"], current["used_bytes"])
         self.assertEqual(unchanged["utc_offset"], current["utc_offset"])

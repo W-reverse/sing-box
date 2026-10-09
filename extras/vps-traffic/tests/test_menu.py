@@ -15,17 +15,32 @@ menu = importlib.util.module_from_spec(MENU_SPEC)
 MENU_SPEC.loader.exec_module(menu)
 BASH = "/opt/homebrew/bin/bash" if pathlib.Path("/opt/homebrew/bin/bash").exists() else shutil.which("bash")
 
+DETECTED = {"interface": "auto0", "address": "198.51.100.9", "name": "auto-vps", "offset": 0}
+
 
 class FakeAPI:
-    def __init__(self, state=None):
+    def __init__(self, state=None, detected=None):
         self.state = state or {}
         self.calls = []
+        self.detected = DETECTED if detected is None else detected
 
     def read_state(self):
         return self.state
 
     def singbox_root(self):
         return pathlib.Path("/nonexistent")
+
+    def detect_interface(self):
+        return self.detected.get("interface")
+
+    def detect_address(self):
+        return self.detected.get("address")
+
+    def default_name(self):
+        return self.detected.get("name")
+
+    def local_utc_offset(self):
+        return self.detected.get("offset")
 
     @staticmethod
     def offset_text(seconds):
@@ -53,8 +68,8 @@ def configured_state(root=None):
 
 
 class MenuTests(unittest.TestCase):
-    def run_menu(self, responses, state=None):
-        api = FakeAPI(state)
+    def run_menu(self, responses, state=None, detected=None):
+        api = FakeAPI(state, detected)
         output = []
         iterator = iter(responses)
 
@@ -78,25 +93,54 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(api.calls, [])
         self.assertTrue(any("选项无效" in line for line in output))
 
-    def test_first_configuration_passes_chinese_name_as_one_argument(self):
-        result, api, _output = self.run_menu(
-            ["2", "eth0", "1TB", "", "", "", "香港 VPS 节点", "203.0.113.10", "", "", "y", "0"])
+    def test_first_configuration_only_requires_quota(self):
+        """Detected interface/address/name mean the wizard asks for the quota alone."""
+        result, api, output = self.run_menu(["2", "1TB", "", "", "y", "0"])
         self.assertEqual(result, 0)
-        self.assertEqual(api.calls, [["configure", "--interface", "eth0", "--quota", "1TB",
-                                     "--reset-day", "1", "--utc-offset", "+00:00", "--mode", "out",
-                                     "--name", "香港 VPS 节点", "--address", "203.0.113.10", "--used", "0"]])
+        self.assertEqual(api.calls, [[
+            "configure", "--interface", "auto0", "--quota", "1TB", "--reset-day", "1",
+            "--utc-offset", "+00:00", "--mode", "out", "--name", "auto-vps",
+            "--address", "198.51.100.9", "--used", "0"]])
+        self.assertTrue(any("自动检测" in line for line in output))
+
+    def test_detection_failure_asks_only_for_the_missing_values(self):
+        result, api, _output = self.run_menu(
+            ["2", "1TB", "", "eth9", "203.0.113.10", "", "y", "0"],
+            None, {"interface": None, "address": None, "name": None, "offset": 0})
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls, [[
+            "configure", "--interface", "eth9", "--quota", "1TB", "--reset-day", "1",
+            "--utc-offset", "+00:00", "--mode", "out", "--name", "VPS",
+            "--address", "203.0.113.10", "--used", "0"]])
+
+    def test_advanced_path_passes_chinese_name_as_one_argument(self):
+        result, api, _output = self.run_menu(
+            ["2", "1TB", "y", "eth0", "203.0.113.10", "香港 VPS 节点",
+             "", "", "", "", "", "y", "0"])
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls, [[
+            "configure", "--interface", "eth0", "--quota", "1TB", "--reset-day", "1",
+            "--utc-offset", "+00:00", "--mode", "out", "--name", "香港 VPS 节点",
+            "--address", "203.0.113.10", "--used", "0"]])
 
     def test_existing_blank_configuration_preserves_values_and_omits_used(self):
-        result, api, _output = self.run_menu(["2"] + [""] * 9 + ["y", "0"], configured_state())
+        result, api, _output = self.run_menu(["2", "", "", "", "y", "0"], configured_state())
         self.assertEqual(result, 0)
-        self.assertEqual(api.calls, [["configure"]])
+        self.assertEqual(api.calls, [[
+            "configure", "--interface", "eth0", "--reset-day", "1", "--utc-offset", "+00:00",
+            "--mode", "out", "--name", "测试 VPS", "--address", "203.0.113.10",
+            "--port", "18080"]])
         self.assertNotIn("--used", api.calls[0])
 
     def test_measurement_change_requires_used_value(self):
         result, api, _output = self.run_menu(
-            ["2", "eth1"] + [""] * 7 + ["55GB", "y", "0"], configured_state())
+            ["2", "", "y", "eth1", "", "", "", "", "", "", "55GB", "y", "0"],
+            configured_state())
         self.assertEqual(result, 0)
-        self.assertEqual(api.calls, [["configure", "--interface", "eth1", "--used", "55GB"]])
+        self.assertEqual(api.calls, [[
+            "configure", "--interface", "eth1", "--reset-day", "1", "--utc-offset", "+00:00",
+            "--mode", "out", "--name", "测试 VPS", "--address", "203.0.113.10",
+            "--port", "18080", "--used", "55GB"]])
 
     def test_cancel_configuration_does_not_call_api(self):
         result, api, output = self.run_menu(["2", "!", "0"])
@@ -105,9 +149,23 @@ class MenuTests(unittest.TestCase):
         self.assertTrue(any("已取消配置" in line for line in output))
 
     def test_rejected_disable_and_token_rotation_have_no_effect(self):
-        result, api, _output = self.run_menu(["6", "n", "9", "n", "0"])
+        result, api, _output = self.run_menu(["6", "n", "9", "n", "0"], configured_state())
         self.assertEqual(result, 0)
         self.assertEqual(api.calls, [])
+
+    def test_unconfigured_action_offers_the_wizard_inside_the_menu(self):
+        """No menu path may tell the user to go run the CLI by hand."""
+        result, api, output = self.run_menu(["1", "y", "1TB", "", "", "y", "0"])
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls[0][0], "configure")
+        self.assertTrue(any("尚未配置" in line for line in output))
+        self.assertFalse(any("sb-traffic configure" in line for line in output))
+
+    def test_declining_the_wizard_returns_to_the_menu_without_side_effects(self):
+        result, api, output = self.run_menu(["1", "n", "0"])
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls, [])
+        self.assertTrue(any("已返回菜单" in line for line in output))
 
     def test_rename_uses_selected_exact_basename(self):
         with tempfile.TemporaryDirectory(prefix="sb-menu-test-") as temp:

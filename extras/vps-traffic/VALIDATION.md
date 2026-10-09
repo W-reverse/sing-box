@@ -7,7 +7,7 @@
 - 主仓库：`W-reverse/sing-box`，基线 `2d78583b5aecccb0da0148a816bc1495a284509f`。
 - 新增实现位于 `extras/vps-traffic/`；对上游已有文件的改动共 3 处：`src/core.sh`（菜单入口 13 行）、`install.sh`（脚本来源指向本 fork，并在安装结束时自动安装扩展，失败仅告警）、`src/init.sh`（同步 `is_sh_repo`）。
 - 不包装原 `sing-box` 命令；版本号与发布流程保持不变。`is_sh_repo` 改为指向本 fork，`sing-box update sh` 因此从本 fork 的 release 获取脚本。
-- 后两项属于同日“简化安装”修订（在首次验收之后加入）。该修订已重跑 40 项 unittest 与 Debian 12 容器内的完整安装流程，均通过。
+- 后两项属于同日“简化安装”修订（在首次验收之后加入）；随后的“交互简化”修订又改了配置向导（自动检测 + 只问额度）与菜单内配置引导。两次修订均已重跑全套 unittest 和 Debian 12 容器内的安装与交互流程，均通过。
 - 独立 `sb-traffic` 命令、`/opt/sing-box-traffic` 程序、`/etc/sing-box-traffic` 数据和 `sing-box-traffic` 服务。
 - 本轮没有 commit、push，也没有连接或部署用户 VPS。
 
@@ -15,10 +15,12 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| Python 3.9.6 全量 unittest discovery | 40 项通过（含菜单整合） |
-| Python 3.14.7 全量 unittest discovery | 40 项通过（含菜单整合） |
+| Python 3.9.6 全量 unittest discovery | 60 项通过（含菜单整合、自动检测、菜单内配置引导） |
+| Python 3.14.7 全量 unittest discovery | 60 项通过（含菜单整合、自动检测、菜单内配置引导） |
+| Debian 12 容器内驱动真实主菜单 | 第 11 项进入子菜单；向导自动检测网卡/地址/名称，仅填额度即完成配置 |
+| Debian 12 容器内未配置时选择依赖配置的功能 | 菜单内即时询问是否进入向导；拒绝后无副作用，全程未提示去敲命令行 |
 | Bash 5.3 对仓库所有 `.sh` 执行 `bash -n` | 通过 |
-| 原有跟踪文件差异检查 | 仅 `src/core.sh` 一个入口块，13 行新增 |
+| 原有跟踪文件差异检查 | 3 个上游文件：`src/core.sh` 菜单入口 13 行、`install.sh`、`src/init.sh` |
 | 扩展目录 `__pycache__` / `.pyc` 检查 | 无遗留 |
 | 实际 Sub-Store 解析器及 Clash Meta 导出器 | 8 类协议通过 |
 

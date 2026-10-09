@@ -21,13 +21,14 @@ import secrets
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import urllib.parse
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 VERSION = "1.0.0"
 MIN_PYTHON = (3, 8)
@@ -337,19 +338,136 @@ def validate_name(name: str) -> str:
     return name
 
 
+TRACE_HOST = "one.one.one.one"
+TRACE_PATH = "/cdn-cgi/trace"
+
+
+def proc_root() -> pathlib.Path:
+    return pathlib.Path(os.environ.get("SB_TRAFFIC_PROC_ROOT", "/proc"))
+
+
+def _route_interface_from_ip() -> Optional[str]:
+    try:
+        result = subprocess.run(["ip", "-o", "route", "show", "default"],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    for line in result.stdout.splitlines():
+        match = re.search(r"\bdev\s+(\S+)", line)
+        if match and match.group(1) != "lo":
+            return match.group(1)
+    return None
+
+
+def detect_interface() -> Optional[str]:
+    """Best-effort default-route interface; None when it cannot be determined."""
+    candidates: List[Tuple[int, str]] = []
+    try:
+        text = (proc_root() / "net" / "route").read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()[1:]
+    except OSError:
+        lines = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 8 or fields[0] == "lo" or fields[1] != "00000000":
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", fields[0]):
+            continue
+        try:
+            if not int(fields[3], 16) & 0x1:  # RTF_UP
+                continue
+            candidates.append((int(fields[6]), fields[0]))
+        except ValueError:
+            continue
+    if candidates:
+        return min(candidates)[1]
+    return _route_interface_from_ip()
+
+
+def _fetch_trace(family: int, timeout: float = 6.0) -> Optional[str]:
+    """GET the upstream IP-echo endpoint over one explicit address family."""
+    try:
+        infos = socket.getaddrinfo(TRACE_HOST, 443, family, socket.SOCK_STREAM)
+    except OSError:
+        return None
+    payload = (f"GET {TRACE_PATH} HTTP/1.1\r\nHost: {TRACE_HOST}\r\n"
+               "User-Agent: sb-traffic\r\nConnection: close\r\n\r\n").encode("ascii")
+    context = ssl.create_default_context()
+    for af, socktype, proto, _canonical, sockaddr in infos:
+        chunks: List[bytes] = []
+        try:
+            with socket.socket(af, socktype, proto) as raw:
+                raw.settimeout(timeout)
+                with context.wrap_socket(raw, server_hostname=TRACE_HOST) as tls:
+                    tls.connect(sockaddr)
+                    tls.sendall(payload)
+                    total = 0
+                    while total < 8192:
+                        data = tls.recv(4096)
+                        if not data:
+                            break
+                        chunks.append(data)
+                        total += len(data)
+        except (OSError, ssl.SSLError):
+            continue
+        body = b"".join(chunks).decode("utf-8", "replace")
+        return body.split("\r\n\r\n", 1)[-1]
+    return None
+
+
+def detect_address(fetch: Optional[Callable[[int], Optional[str]]] = None) -> Optional[str]:
+    """Public address of this host, using the same lookup as the upstream script.
+
+    IPv4 is preferred; IPv6 is used only when no IPv4 address is reported.
+    """
+    if fetch is None and os.environ.get("SB_TRAFFIC_OFFLINE"):
+        return None
+    fetch = _fetch_trace if fetch is None else fetch
+    for family in (socket.AF_INET, socket.AF_INET6):
+        try:
+            body = fetch(family)
+        except Exception:
+            body = None
+        for line in (body or "").splitlines():
+            if line.startswith("ip="):
+                value = line[3:].strip()
+                if value and not CONTROL_RE.search(value) and len(value) <= 253:
+                    return value
+    return None
+
+
+def default_name() -> str:
+    try:
+        name = socket.gethostname().strip()
+    except OSError:
+        name = ""
+    if not name or name.split(".")[0].lower() in ("localhost", "local"):
+        return "VPS"
+    return name
+
+
+def local_utc_offset() -> int:
+    offset = dt.datetime.now().astimezone().utcoffset()
+    return int(offset.total_seconds()) if offset else 0
+
 def configure(args: argparse.Namespace) -> None:
     with locked_state():
         state = read_state()
         old = state.get("config", {})
         old_port = old.get("port")
         initial = not bool(state)
-        interface = args.interface or old.get("interface")
+        interface = args.interface or old.get("interface") or detect_interface()
         quota_text = args.quota
-        address = args.address or old.get("address")
-        if initial and (not interface or not quota_text or not address):
-            raise TrafficError("首次配置必须提供 --interface、--quota、--address")
+        address = args.address or old.get("address") or detect_address()
+        if initial and not quota_text:
+            raise TrafficError("请用 --quota 指定月度额度（如 --quota 1TB），或在交互菜单中配置")
         if not interface:
-            raise TrafficError("缺少网卡；请提供 --interface")
+            raise TrafficError("无法自动检测默认网卡；请用 --interface 指定")
+        if not address:
+            raise TrafficError("无法自动检测公网地址；请用 --address 指定（VPS 的 IP 或域名）")
         if interface == "lo" or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", interface):
             raise TrafficError("网卡名无效")
         new_quota = parse_size(quota_text, positive=True) if quota_text else int(old["quota_bytes"])

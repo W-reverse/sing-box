@@ -39,34 +39,78 @@ def _invoke(api: Any, args: List[str], output_fn: Callable[[str], Any]) -> None:
             output_fn("操作未成功；请根据上方提示处理。")
 
 
+def _detect(api: Any) -> Dict[str, Any]:
+    """Best-effort auto-detection; a failed probe never blocks the wizard."""
+    def call(name: str) -> Any:
+        function = getattr(api, name, None)
+        if function is None:
+            return None
+        try:
+            return function()
+        except Exception:
+            return None
+    return {"interface": call("detect_interface"), "address": call("detect_address"),
+            "name": call("default_name"), "offset": call("local_utc_offset")}
+
+
+def _refine(input_fn: Callable[[str], str], output_fn: Callable[[str], Any],
+            label: str, value: Optional[str]) -> Optional[str]:
+    """Ask again, keeping the current value when the answer is empty."""
+    answer = _ask(input_fn, output_fn, label, value)
+    return value if answer is None else answer
+
+
 def _configure(api: Any, input_fn: Callable[[str], str],
                output_fn: Callable[[str], Any]) -> None:
     state = api.read_state()
     old = state.get("config", {}) if state else {}
     initial = not bool(state)
+    guess = _detect(api)
 
-    interface = _ask(input_fn, output_fn, "网卡名称", old.get("interface"))
+    interface = old.get("interface") or guess.get("interface")
+    address = old.get("address") or guess.get("address")
+    name = old.get("name") or guess.get("name") or "VPS"
+    offset = (api.offset_text(old["utc_offset_seconds"]) if "utc_offset_seconds" in old
+              else api.offset_text(int(guess.get("offset") or 0)))
+    reset_day = str(old["reset_day"]) if "reset_day" in old else "1"
+    mode = old.get("mode", "out")
+    port = str(old["port"]) if "port" in old else None
+
+    output_fn("当前设置（自动检测 + 默认值）：")
+    output_fn("  网卡      " + (interface or "（未能自动检测，稍后需要填写）"))
+    output_fn("  VPS 地址  " + (address or "（未能自动检测，稍后需要填写）"))
+    output_fn("  VPS 名称  " + name)
+    output_fn("  账期      每月 " + reset_day + " 日重置，时区 " + offset)
+    output_fn("  统计方向  " + mode + ("，订阅端口 " + port if port else ""))
+
     quota = _ask(input_fn, output_fn, "月度额度（如 1TB）",
                  (str(old["quota_bytes"]) + "B") if "quota_bytes" in old else None)
-    reset_day = _ask(input_fn, output_fn, "每月重置日",
-                     str(old["reset_day"]) if "reset_day" in old else None,
-                     "1" if initial else None)
-    utc_offset = _ask(input_fn, output_fn, "固定 UTC 偏移（如 +08:00）",
-                      api.offset_text(old["utc_offset_seconds"]) if "utc_offset_seconds" in old else None,
-                      "+00:00" if initial else None)
-    mode = _ask(input_fn, output_fn, "统计方向（in / out / both）", old.get("mode"),
-                "out" if initial else None)
-    name = _ask(input_fn, output_fn, "VPS 名称", old.get("name"), "VPS" if initial else None)
-    address = _ask(input_fn, output_fn, "VPS 地址", old.get("address"))
-    port = _ask(input_fn, output_fn, "可选监听端口", str(old["port"]) if "port" in old else None)
+    while initial and not quota:
+        output_fn("首次配置必须填写月度额度。")
+        quota = _ask(input_fn, output_fn, "月度额度（如 1TB）")
 
-    if initial and (not interface or not quota or not address):
-        output_fn("首次配置必须填写网卡、月度额度和 VPS 地址；未写入配置。")
+    advanced = _ask(input_fn, output_fn,
+                    "是否手动调整高级项（网卡/地址/名称/重置日/时区/方向/端口）", default="n")
+    if (advanced or "n").strip().lower() in ("y", "yes", "是"):
+        interface = _refine(input_fn, output_fn, "网卡名称", interface)
+        address = _refine(input_fn, output_fn, "VPS 地址", address)
+        name = _refine(input_fn, output_fn, "VPS 名称", name)
+        reset_day = _refine(input_fn, output_fn, "每月重置日", reset_day)
+        offset = _refine(input_fn, output_fn, "固定 UTC 偏移（如 +08:00）", offset)
+        mode = _refine(input_fn, output_fn, "统计方向（in / out / both）", mode)
+        port = _refine(input_fn, output_fn, "订阅监听端口", port)
+    else:
+        if not interface:
+            interface = _ask(input_fn, output_fn, "请填写网卡名称（可用 ip -br link 查看）")
+        if not address:
+            address = _ask(input_fn, output_fn, "请填写 VPS 地址（公网 IP 或域名）")
+    if not interface or not address:
+        output_fn("缺少网卡或 VPS 地址；未写入配置。可选择 2 重新配置。")
         return
 
     args = ["configure"]
     fields = (("--interface", interface), ("--quota", quota),
-              ("--reset-day", reset_day), ("--utc-offset", utc_offset),
+              ("--reset-day", reset_day), ("--utc-offset", offset),
               ("--mode", mode), ("--name", name), ("--address", address),
               ("--port", port))
     for flag, value in fields:
@@ -90,7 +134,7 @@ def _configure(api: Any, input_fn: Callable[[str], str],
                 (interface if interface is not None else old["interface"]) != old["interface"]
                 or (mode if mode is not None else old["mode"]) != old["mode"]
                 or int(reset_day if reset_day is not None else old["reset_day"]) != int(old["reset_day"])
-                or api.parse_offset(utc_offset if utc_offset is not None
+                or api.parse_offset(offset if offset is not None
                                     else api.offset_text(old["utc_offset_seconds"]))
                 != int(old["utc_offset_seconds"])
             )
@@ -114,6 +158,8 @@ def _configure(api: Any, input_fn: Callable[[str], str],
         output_fn("已取消配置；未写入。")
         return
     _invoke(api, args, output_fn)
+    if initial:
+        output_fn("提示：需要后台计量请选择 5 启用服务；之后可在 7 查看订阅 URL。")
 
 
 def _rename(api: Any, input_fn: Callable[[str], str],
@@ -148,12 +194,31 @@ def _rename(api: Any, input_fn: Callable[[str], str],
     _invoke(api, ["rename", files[index - 1].name, label], output_fn)
 
 
+STATE_CHOICES = {"1": "查看用量", "3": "校准已用总量", "4": "重命名订阅显示名",
+                 "7": "显示订阅 URL", "8": "生成 Caddy 片段", "9": "轮换 token"}
+
+def _ensure_configured(choice: str, api: Any, input_fn: Callable[[str], str],
+                       output_fn: Callable[[str], Any]) -> bool:
+    """Keep state-dependent actions inside the menu instead of sending users to the CLI."""
+    if choice not in STATE_CHOICES or api.read_state():
+        return True
+    output_fn("尚未配置；" + STATE_CHOICES[choice] + "需要先完成配置。")
+    answer = _read(input_fn, "现在进入配置向导？输入 y 继续，其它输入返回菜单：")
+    if answer != "y":
+        output_fn("已返回菜单。")
+        return False
+    _configure(api, input_fn, output_fn)
+    return bool(api.read_state())
+
 def _dispatch(choice: str, api: Any, input_fn: Callable[[str], str],
               output_fn: Callable[[str], Any]) -> None:
+    if choice == "2":
+        _configure(api, input_fn, output_fn)
+        return
+    if not _ensure_configured(choice, api, input_fn, output_fn):
+        return
     if choice == "1":
         _invoke(api, ["status"], output_fn)
-    elif choice == "2":
-        _configure(api, input_fn, output_fn)
     elif choice == "3":
         value = _read(input_fn, "校准为本周期已用总量（如 120GB，! 取消）：")
         if value:
@@ -196,7 +261,7 @@ def run_menu(api: Any, input_fn: Optional[Callable[[str], str]] = None,
     while True:
         output_fn("\n=== VPS 流量统计管理 ===")
         output_fn("1. 查看用量")
-        output_fn("2. 配置网卡 / 额度 / 重置日 / 时区 / 方向 / VPS 名称 / 地址 / 端口")
+        output_fn("2. 配置（额度必填；网卡/地址/名称等自动检测，可另行调整）")
         output_fn("3. 校准已用总量")
         output_fn("4. 重命名真实配置文件的订阅显示名")
         output_fn("5. 启用服务")

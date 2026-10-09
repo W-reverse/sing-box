@@ -8,6 +8,8 @@
 
 **修订（安装简化，2026-10-09 晚）**：为让安装方式与上游完全一致，放开原“不改主安装器 / 不改更新源”的限制——`install.sh` 与 `src/init.sh` 的 `is_sh_repo` 改指向本 fork（脚本代码取自本 fork 的 release），且主安装器在安装结束时自动调用扩展安装器（缺 Python 等失败仅告警，不中断主安装）。上游已有文件的改动由 1 处增至 3 处，仍各自连续，可单独剔除。
 
+**修订（交互简化，2026-10-09 晚）**：配置向导原先逐个询问网卡/额度/重置日/时区/方向/名称/地址/端口，且缺少必填项时会中止并把用户推回命令行。现改为：优先自动检测（默认路由网卡、公网地址、主机名、本机时区），基本流程只要求额度，其余可在“手动调整高级项”里改；缺失值继续追问而不是中止；未配置时选择依赖配置的功能在菜单内询问是否进入向导。自动检测失败不影响可用性，只是回退为手动填写。
+
 独立命令 `sb-traffic`；独立安装目录 `/opt/sing-box-traffic`；数据目录 `/etc/sing-box-traffic`（0700）；独立服务 `sing-box-traffic`；可显式指定 sing-box 根目录（默认 `/etc/sing-box`），通过隔离适配器读取其配置并复用其生成 URL 的逻辑。扩展安装、更新、卸载与主项目分开；卸载扩展默认保留数据，purge 显式删除。主项目卸载前应停用扩展，文档明确此顺序，不能为了自动钩子侵入原代码。
 
 Git 合并目标是降低冲突，不承诺永远零兼容维护；上游配置和函数接口变化由小适配层及兼容测试兜底。扩展从 fork 的 extras 目录安装，上游脚本更新不会覆盖 /opt 和独立数据目录；后续扩展更新重新执行其 install.sh，必须保留累计和 token。
@@ -29,7 +31,7 @@ Git 合并目标是降低冲突，不承诺永远零兼容维护；上游配置�
 ## CLI 合约
 
 - 安装：`sudo bash extras/vps-traffic/install.sh`，先检查 Bash>=4、Python>=最低版本、jq 和已有 sing-box 脚本存在；缺依赖给出明确安装建议，不默认下载未知二进制。复制仅本扩展文件，保证重复安装不覆盖数据，可测试的路径注入只用于安装器测试。
-- `sb-traffic configure --interface eth0 --quota 1TB --reset-day 15 --utc-offset +08:00 --mode out --name '香港 VPS' --address 203.0.113.10 --used 120GB`。首次必填 interface/quota/address；默认 out，输出确认口径；支持 in/out/both。`--port` 默认18080仅绑定127.0.0.1；变更提示 restart 或再次 enable。
+- `sb-traffic configure --quota 1TB [--interface eth0] [--reset-day 15] [--utc-offset +08:00] [--mode out] [--name '香港 VPS'] [--address 203.0.113.10] [--used 120GB]`。首次必填只有 quota；interface 缺省取默认路由网卡，address 缺省用与上游相同的公网 IP 查询（`SB_TRAFFIC_OFFLINE=1` 可禁止），两者检测失败才报错要求显式指定；name 缺省取主机名，reset-day 缺省 1，utc-offset 缺省本机时区。默认统计方向 out，输出确认口径；支持 in/out/both。`--port` 默认18080仅绑定127.0.0.1；变更提示 restart 或再次 enable。
 - `sb-traffic status [--json]` 显示额度、已用、剩余、账期起止、方向/网卡、采样时间、超额/误差告警。
 - `sb-traffic set-used 250GB` 将已用总量设为250GB，在同一事务更新计数器基线，不是追加250GB。允许超额；剩余不为负。
 - configure 可更新 quota/name/address 而不丢累计。改变 interface/mode/reset-day/utc-offset 必须同时明确 --used，避免静默重算历史；重锚到新账期和新网卡。
@@ -37,7 +39,7 @@ Git 合并目标是降低冲突，不承诺永远零兼容维护；上游配置�
 - `sb-traffic enable/disable` 管理独立服务；disable 保留数据，不修改代理服务。失败返回非零，不误报成功。
 - `sb-traffic subscription` 输出即时纯URI订阅（无ANSI）；`sb-traffic url` 显示本机 token URL；`sb-traffic rotate-token` 使旧URL失效；`sb-traffic caddy-config sub.example.com` 只输出HTTPS反代片段，不修改现有配置或擅自占端口。
 - `sb-traffic uninstall [--purge]` 停用并清理自身服务/命令/程序；默认保留统计数据，purge才删除。原项目卸载不会自动删除此独立扩展，须文档说明。
-- `sb-traffic menu`：交互式查看用量、完整配置向导、校准已用、选择文件重命名、启停服务、显示订阅 URL、生成 Caddy 片段、轮换 token；已有值可保留，配置可取消并确认后写入，停用/轮换需确认。0/EOF/Ctrl-C 退出子菜单；不提供卸载/清空数据选项。
+- `sb-traffic menu`：交互式查看用量、配置向导、校准已用、选择文件重命名、启停服务、显示订阅 URL、生成 Caddy 片段、轮换 token；向导先自动检测网卡/地址/名称/时区，通常只需额度即可完成，其余值可回车保留或经“手动调整高级项”修改；未配置时选择依赖配置的功能会当场询问是否进入向导，不把用户推向命令行。配置可取消并确认后写入，停用/轮换需确认。0/EOF/Ctrl-C 退出子菜单；不提供卸载/清空数据选项。
 
 ## 计量与状态
 
