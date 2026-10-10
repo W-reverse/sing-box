@@ -132,6 +132,19 @@ def read_state() -> Dict[str, Any]:
         raise TrafficError("统计状态计数器或 boot_id 无效；为避免静默清零，已停止操作")
     if type(period_start) not in (int, float) or not math.isfinite(float(period_start)):
         raise TrafficError("统计账期基线无效；为避免静默清零，已停止操作")
+    publication = state.get("publication")
+    if publication is not None:
+        try:
+            publication_valid = (
+                isinstance(publication, dict)
+                and validate_domain(publication["domain"]) == publication["domain"]
+                and type(publication["https_port"]) is int and 1 <= publication["https_port"] <= 65535
+                and type(publication["backend_port"]) is int and 1 <= publication["backend_port"] <= 65535
+                and type(publication["verified"]) is bool)
+        except (KeyError, TypeError, TrafficError):
+            publication_valid = False
+        if not publication_valid:
+            raise TrafficError("订阅域名状态无效；旧统计未更改")
     renames, warnings = state.get("renames", {}), state.get("warnings", [])
     if (not isinstance(renames, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in renames.items())
             or not isinstance(warnings, list) or any(not isinstance(v, str) for v in warnings)):
@@ -521,6 +534,8 @@ def configure(args: argparse.Namespace) -> None:
     print("首次启用服务前请确认 --address 及计量口径正确。")
     if old_port is not None and int(old_port) != int(port):
         print("监听端口已更改；需执行 sb-traffic disable 后再 enable，或由服务管理器 restart。")
+        if state.get("publication"):
+            print("请重新运行菜单 10 配置订阅域名，更新反代的后端端口。")
 
 
 def set_used(value: str) -> None:
@@ -657,9 +672,27 @@ def rename(filename: str, label: str) -> None:
     print(f"已将 {filename} 显示为 {label}")
 
 
-def token_url() -> str:
+def token_url(local: bool = False) -> str:
     state = current_state(sample=False)
+    publication = state.get("publication")
+    if publication and not local:
+        port = publication["https_port"]
+        suffix = "" if port == 443 else f":{port}"
+        return f"https://{publication['domain']}{suffix}/sub/{state['token']}"
     return f"http://127.0.0.1:{state['config']['port']}/sub/{state['token']}"
+
+
+def print_url(local: bool = False) -> None:
+    state = current_state(sample=False)
+    publication = state.get("publication")
+    if not local:
+        if not publication:
+            print("尚未配置公网域名；下面仅为本机地址。请在菜单 10 配置订阅域名。", file=sys.stderr)
+        elif publication["backend_port"] != state["config"]["port"]:
+            print("订阅端口已变化；请重跑菜单 10 更新反代，当前公网地址可能不可用。", file=sys.stderr)
+        elif not publication["verified"]:
+            print("反代已配置，但 HTTPS 尚未验证可用；请检查 DNS/证书，重跑菜单 10。", file=sys.stderr)
+    print(token_url(local=local))
 
 
 def rotate_token() -> None:
@@ -674,9 +707,38 @@ def rotate_token() -> None:
     print(token_url())
 
 
+def validate_domain(value: str) -> str:
+    if not isinstance(value, str):
+        raise TrafficError("请输入有效的公网域名")
+    value = value.strip().lower()
+    if value.endswith("."):
+        value = value[:-1]
+    labels = value.split(".")
+    if (len(value) > 253 or len(labels) < 2 or labels[-1].isdigit()
+            or labels[-1] in ("localhost", "local", "internal") or value.endswith(".home.arpa")
+            or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels)):
+        raise TrafficError("请输入纯域名，如 sub.example.com；不要带协议、端口、路径、IP 或通配符")
+    return value
+
+
+def configure_domain(value: str) -> None:
+    import importlib.util
+    path = pathlib.Path(__file__).with_name("publish.py")
+    spec = importlib.util.spec_from_file_location("sb_traffic_publish", path)
+    if spec is None or spec.loader is None:
+        raise TrafficError("无法加载域名部署模块，请更新流量扩展")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        verified = module.deploy(sys.modules[__name__], value)
+    except module.PublicationError as exc:
+        raise TrafficError(str(exc)) from exc
+    if not verified:
+        raise TrafficError("反代已部署，但 HTTPS 未验证通过；修复 DNS/端口/证书后可重试，未宣称公网可用")
+
+
 def caddy_config(domain: str) -> None:
-    if not re.fullmatch(r"(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", domain) or ".." in domain:
-        raise TrafficError("域名格式无效")
+    domain = validate_domain(domain)
     state = current_state(sample=False)
     port = state["config"]["port"]
     print(f"{domain} {{\n\t@traffic path /sub/*\n\treverse_proxy @traffic 127.0.0.1:{port}\n}}")
@@ -866,10 +928,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("enable", help="启用独立后台服务")
     sub.add_parser("disable", help="停用独立后台服务")
     sub.add_parser("subscription", help="输出当前纯 URI 订阅")
-    sub.add_parser("url", help="显示本机 token 订阅 URL")
+    url = sub.add_parser("url", help="显示公网订阅地址；未配置域名时为本机地址")
+    url.add_argument("--local", action="store_true", help="仅显示回环诊断地址")
     sub.add_parser("rotate-token", help="使旧订阅 URL 失效")
     caddy = sub.add_parser("caddy-config", help="输出独立 HTTPS 反代片段")
     caddy.add_argument("domain")
+    domain = sub.add_parser("domain", help="自动部署 Caddy HTTPS 订阅反代")
+    domain.add_argument("name", help="独立订阅子域名，如 sub.example.com")
     sub.add_parser("menu", help="打开中文交互菜单")
     sub.add_parser("serve", help=argparse.SUPPRESS)
     un = sub.add_parser("uninstall", help="卸载扩展（默认保留数据）")
@@ -899,11 +964,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "subscription":
             subscription()
         elif args.command == "url":
-            print(token_url())
+            print_url(local=args.local)
         elif args.command == "rotate-token":
             rotate_token()
         elif args.command == "caddy-config":
             caddy_config(args.domain)
+        elif args.command == "domain":
+            configure_domain(args.name)
         elif args.command == "menu":
             import importlib.util
             menu_path = pathlib.Path(__file__).with_name("menu.py")

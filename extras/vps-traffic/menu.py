@@ -195,7 +195,8 @@ def _rename(api: Any, input_fn: Callable[[str], str],
 
 
 STATE_CHOICES = {"1": "查看用量", "3": "校准已用总量", "4": "重命名订阅显示名",
-                 "7": "显示订阅 URL", "8": "生成 Caddy 片段", "9": "轮换 token"}
+                 "7": "显示订阅 URL", "8": "生成 Caddy 片段", "9": "轮换 token",
+                 "10": "配置订阅域名"}
 
 def _ensure_configured(choice: str, api: Any, input_fn: Callable[[str], str],
                        output_fn: Callable[[str], Any]) -> bool:
@@ -251,6 +252,17 @@ def _dispatch(choice: str, api: Any, input_fn: Callable[[str], str],
             _invoke(api, ["rotate-token"], output_fn)
         else:
             output_fn("已取消；token 未轮换。")
+    elif choice == "10":
+        output_fn("将复用或安装 Caddy，启用统计服务并自动配置 HTTPS 反代。")
+        output_fn("请先将独立子域名解析到本 VPS，并放行 80/443；不修改云防火墙。")
+        output_fn("已有 Caddy 使用 admin off 时需短暂重启；不会修改代理节点配置。")
+        current = api.read_state().get("publication", {}).get("domain")
+        domain = _read(input_fn, "订阅域名" + (f" [{current}]" if current else "") + "（! 取消）: ")
+        domain = domain or current
+        if domain:
+            _invoke(api, ["domain", domain], output_fn)
+        else:
+            output_fn("域名不能为空；未修改。")
 
 
 def run_menu(api: Any, input_fn: Optional[Callable[[str], str]] = None,
@@ -269,6 +281,7 @@ def run_menu(api: Any, input_fn: Optional[Callable[[str], str]] = None,
         output_fn("7. 显示订阅 URL")
         output_fn("8. 生成 Caddy 片段")
         output_fn("9. 轮换 token")
+        output_fn("10. 配置订阅域名（自动 HTTPS 反代）")
         output_fn("0. 退出")
         try:
             choice = input_fn("请选择：").strip()
@@ -278,8 +291,8 @@ def run_menu(api: Any, input_fn: Optional[Callable[[str], str]] = None,
         if choice == "0":
             output_fn("已退出菜单。")
             return 0
-        if choice not in {str(number) for number in range(1, 10)}:
-            output_fn("选项无效，请输入 0–9。")
+        if choice not in {str(number) for number in range(1, 11)}:
+            output_fn("选项无效，请输入 0–10。")
             continue
         try:
             _dispatch(choice, api, input_fn, output_fn)

@@ -110,7 +110,7 @@ install_extension() {
     mkdir -p "$HOME_DIR" "$DATA_DIR" "$BIN_DIR"
     chmod 0700 "$DATA_DIR"
     # Replacement is limited to files shipped by this extension; persistent data stays in DATA_DIR.
-    for file in traffic.py menu.py adapter.sh install.sh; do
+    for file in traffic.py menu.py publish.py adapter.sh install.sh; do
         install -m 0755 "$SCRIPT_DIR/$file" "$HOME_DIR/$file"
     done
     cat >"$HOME_DIR/sb-traffic" <<EOF
@@ -134,6 +134,10 @@ service_action() {
             if [[ $backend == systemd ]]; then systemctl enable --now "$SERVICE_NAME.service"
             else rc-update add "$SERVICE_NAME" default && rc-service "$SERVICE_NAME" start; fi
             ;;
+        restart)
+            if [[ $backend == systemd ]]; then systemctl restart "$SERVICE_NAME.service"
+            else rc-service "$SERVICE_NAME" restart; fi
+            ;;
         disable)
             if [[ $backend == systemd ]]; then
                 systemctl disable --now "$SERVICE_NAME.service"
@@ -145,7 +149,7 @@ service_action() {
                 rc-update del "$SERVICE_NAME" default || true
             fi
             ;;
-        *) fail 'service action 只能是 enable 或 disable' ;;
+        *) fail 'service action 只能是 enable、disable 或 restart' ;;
     esac
 }
 
@@ -176,7 +180,7 @@ uninstall_extension() {
 
 case ${1:-install} in
     install) install_extension ;;
-    service) shift; [[ $# -eq 1 ]] || fail '用法: install.sh service enable|disable'; service_action "$1" ;;
+    service) shift; [[ $# -eq 1 ]] || fail '用法: install.sh service enable|disable|restart'; service_action "$1" ;;
     uninstall) shift; [[ $# -le 1 ]] || fail '用法: install.sh uninstall [--purge]'; uninstall_extension "${1:-}" ;;
     *) fail '用法: install.sh [install|service enable|service disable|uninstall [--purge]]' ;;
 esac

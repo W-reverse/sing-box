@@ -177,6 +177,30 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(api.calls, [["rename", filename, "香港 节点"]])
 
+    def test_domain_option_only_asks_for_domain(self):
+        result, api, output = self.run_menu(["10", "sub.example.com", "0"], configured_state())
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls, [["domain", "sub.example.com"]])
+        self.assertTrue(any("10. 配置订阅域名" in line for line in output))
+
+    def test_domain_cancellation_does_not_deploy(self):
+        result, api, _output = self.run_menu(["10", "!", "0"], configured_state())
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls, [])
+
+    def test_domain_blank_reuses_existing_value(self):
+        state = configured_state()
+        state["publication"] = {"domain": "old.example.com"}
+        result, api, _output = self.run_menu(["10", "", "0"], state)
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls, [["domain", "old.example.com"]])
+
+    def test_domain_without_configuration_offers_wizard(self):
+        result, api, output = self.run_menu(["10", "n", "0"])
+        self.assertEqual(result, 0)
+        self.assertEqual(api.calls, [])
+        self.assertTrue(any("配置订阅域名需要先完成配置" in line for line in output))
+
     def test_actual_traffic_menu_command_accepts_zero(self):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         result = subprocess.run([sys.executable, "-B", str(TRAFFIC_PATH), "menu"],
@@ -208,6 +232,10 @@ class MenuTests(unittest.TestCase):
             installed = base / "opt/sing-box-traffic/menu.py"
             self.assertTrue(installed.is_file())
             self.assertEqual(installed.read_bytes(), MENU_PATH.read_bytes())
+            self.assertEqual((base / "opt/sing-box-traffic/publish.py").read_bytes(), (EXT / "publish.py").read_bytes())
+            result = subprocess.run([BASH, str(EXT / "install.sh"), "service", "restart"], env=env,
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

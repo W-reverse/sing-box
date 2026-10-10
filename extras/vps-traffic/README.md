@@ -12,7 +12,7 @@ sudo bash extras/vps-traffic/install.sh
 ```
 
 
-生产 Linux 使用 `/bin/bash`，安装器会拒绝 Bash<4；不会自动安装依赖，也不下载未知二进制。默认读取 `/etc/sing-box`，程序装在 `/opt/sing-box-traffic`，数据保存在权限 0700 的 `/etc/sing-box-traffic`。主项目在其他目录时，安装器预检可设 `SB_TRAFFIC_ROOT=/实际/路径`，并在首次 `configure` 使用 `--root /实际/路径` 将路径持久保存。安装器创建自己的 `sing-box-traffic` systemd 或 OpenRC 服务模板，但默认不启用服务。macOS 本机 Bash 3.2 不满足要求；本地开发/测试明确用现代 Bash，不在 macOS 安装生产服务。
+生产 Linux 使用 `/bin/bash`，安装器会拒绝 Bash<4；扩展安装器不自动安装依赖。菜单 10 的域名部署会复用 Caddy，缺少时尝试使用现有系统软件源安装 `caddy`（apt-get/dnf/yum/apk），不添加第三方软件源或下载未知二进制。默认读取 `/etc/sing-box`，程序装在 `/opt/sing-box-traffic`，数据保存在权限 0700 的 `/etc/sing-box-traffic`。主项目在其他目录时，安装器预检可设 `SB_TRAFFIC_ROOT=/实际/路径`，并在首次 `configure` 使用 `--root /实际/路径` 将路径持久保存。安装器创建自己的 systemd/OpenRC 服务模板，默认不启用；域名部署会启用并重启该服务。macOS 仅用于开发测试，不部署生产服务。
 
 安装器重复运行用于更新，不覆盖数据、累计用量或 token。只运行此扩展目录中的安装器；不要调用主项目安装器来更新本扩展。更新扩展代码必须先 `sb-traffic disable`，再重装扩展，最后 `sb-traffic enable`；否则已运行的旧 Python 进程仍使用旧代码。
 
@@ -28,7 +28,7 @@ sudo sing-box
 sudo sb-traffic menu
 ```
 
-子菜单提供：查看用量、配置额度/网卡/重置日/时区、校准已用总量、选择节点重命名、启用/停用统计服务、查看订阅地址、生成 Caddy 配置片段和轮换令牌。配置向导会先自动检测网卡（默认路由）、VPS 地址（与上游相同的公网 IP 查询）、名称（主机名）和本机时区，因此通常只需填写月度额度即可完成；要改这些值时在向导里选择“手动调整高级项”。已有值可回车保留，输入 `!` 可取消；保存前需确认。改变计量口径或账期时会要求重新输入当前已用总量，避免静默清零。停用与令牌轮换需确认。未配置时选择依赖配置的功能（查看用量/校准/重命名/订阅 URL/Caddy 片段/轮换），菜单会当场询问是否进入配置向导，不需要离开菜单去敲命令行。输入 `0`、EOF 或 Ctrl-C 退出流量子菜单；不停止后台统计服务。
+子菜单提供：查看用量、配置额度/网卡/重置日/时区、校准已用总量、节点重命名、启停统计服务、查看订阅地址、生成 Caddy 片段、轮换令牌，以及 **10. 配置订阅域名（自动 HTTPS 反代）**。配置向导先自动检测网卡、VPS 地址、名称和时区；通常只需填写额度，其他值可在高级项调整。回车保留已有值，`!` 取消，保存配置需确认。改变计量口径或账期必须重新输入已用总量。尚未配置时，依赖状态的菜单项（包括域名部署）会当场提供配置向导。域名部署只需输入域名，提交即执行；执行前会提示安装/启用服务和 Caddy 重启的可能影响。`0`、EOF 或 Ctrl-C 退出菜单，不停止后台服务。
 
 原主菜单的既有编号不变；“流量统计”动态追加在末尾，不占用固定编号。未安装扩展时只显示安装指引，不会自动下载或修改系统。独立安装器仍不会改写现有 `/etc/sing-box/sh/src/core.sh`，因此旧 VPS 需要先部署本 fork 的菜单入口版本；单独更新扩展不会凭空改动原主菜单。
 
@@ -42,7 +42,6 @@ sudo sb-traffic menu
 
 配置只有额度是必填；网卡、VPS 地址、名称、账期都有自动检测或默认值：
 
-```sh
 ```sh
 sudo sb-traffic configure --quota 1TB
 sudo sb-traffic status
@@ -76,7 +75,9 @@ sudo sb-traffic configure --port 18081      # 然后 disable 再 enable，或使
 ```sh
 sudo sb-traffic subscription             # 即时输出纯 URI，不含 ANSI
 sudo sb-traffic rename 'VLESS-REALITY-443.json' '香港 VPS · Reality'
-sudo sb-traffic url                      # 回环 token URL
+sudo sb-traffic url                      # 配置域名后输出公网 HTTPS 地址
+sudo sb-traffic url --local              # 仅用于本机诊断
+sudo sb-traffic domain sub.example.com   # 与菜单 10 相同的自动部署流程
 sudo sb-traffic rotate-token             # 撤销旧 URL
 sudo sb-traffic caddy-config sub.example.com
 ```
@@ -85,24 +86,24 @@ sudo sb-traffic caddy-config sub.example.com
 
 Sub-Store 中为**每台 VPS 各自**新增远程 URL 订阅，再聚合这些订阅；同一 VPS 的所有节点共享其额度/用量显示，不要把不同 VPS 的额度混成一个值或把账期伪装成 expire。改名后检查 Sub-Store 的名称过滤/后缀规则和固定选择；部分客户端可能把新名称视为新节点。额度、节点或名称变化后，刷新 Sub-Store 源缓存并在客户端更新/刷新该订阅，客户端才会看到新余额或节点名。
 
-订阅服务只绑定 `127.0.0.1:<port>`（默认 18080）。`url` 显示的是本机 URL，仅用于本机或隧道；它是 token bearer 凭据，不应公开粘贴或写入日志。HTTP 仅提供 token 路径下 GET/HEAD，错误 token/路径返回 404，写请求不执行管理操作，响应 `Cache-Control: no-store`。请求只读后台缓存，不会启动 shell；状态损坏、导出失败或缓存超过 125 秒时返回 503。后台约每秒检查状态；token 轮换通常约 1 秒生效，但若正被最长 60 秒的节点导出阻塞，旧 token 可能要约 61 秒才撤销，另受系统调度影响，不承诺硬实时。节点配置全量导出每 60 秒刷新一次（或服务启动/状态变化时刷新）。紧急撤销请依次执行 `sb-traffic disable`、`sb-traffic rotate-token`、`sb-traffic enable`；更改监听端口也需重启服务。
+### 一次输入域名，自动发布 HTTPS 订阅
 
-推荐使用独立域名的 Caddy HTTPS 站点，并且只反代订阅路径。`caddy-config` 只打印片段，不写入现有 Caddyfile、不改防火墙/证书/代理路径、不占公网 HTTP 端口。对现有上游 Caddy，先确认主配置已导入 `/etc/caddy/sites/*.conf`，再创建独立站点文件；先检查并拒绝覆盖同名文件。验证配置后重启 Caddy（systemd 或 OpenRC），不要依赖 reload。
-```sh
-set -euo pipefail
-sudo grep -F 'import /etc/caddy/sites/*.conf' /etc/caddy/Caddyfile
-target=/etc/caddy/sites/sub.example.com.conf
-sudo test ! -e "$target" || { echo "拒绝覆盖已有文件：$target" >&2; exit 1; }
-sudo install -d -m 0755 /etc/caddy/sites
-sudo sb-traffic caddy-config sub.example.com | sudo tee "$target" >/dev/null
-sudo caddy validate --config /etc/caddy/Caddyfile
-# systemd:
-sudo systemctl restart caddy
-# OpenRC instead:
-# sudo rc-service caddy restart
-```
+1. 在 DNS 中创建独立子域名，如 `sub.example.com`，将所有 A/AAAA 记录指向这台 VPS。**使用 DNS-only/直连解析**；自动部署会拒绝解析到其他服务器或 CDN 的域名。
+2. 放行 TCP 80/443。已有服务占用时不能强行抢占；若 Caddy 已在使用这些端口，会复用它。原 Caddy 使用非标准 HTTPS 端口时，新站点与输出 URL 会沿用该端口；证书验证仍需公网 80 或 443 转发到 Caddy，订阅端口也需放行。
+3. 进入 `sudo sb-traffic menu`，选择 **10. 配置订阅域名**，输入纯域名（不含 `https://`、端口或路径）。CLI 等价命令为 `sudo sb-traffic domain sub.example.com`。
+4. 程序自动检查 DNS、复用/安装 Caddy、启用并重启独立统计服务、部署反代、等待证书，并核对公网与本机订阅内容。看到“HTTPS 订阅已验证”后，将输出的地址填入远程 Sub-Store。
 
-部署远程 Sub-Store 源时，保留 `url` 输出的 `/sub/<token>` 路径，仅将 `http://127.0.0.1:<port>` 替换为 `https://sub.example.com`；不要公开本机 token URL，也不要将 token 服务直接暴露为公网明文 HTTP。没有 Caddy 时，先按 Caddy 官方安装文档部署；本扩展不会自动安装 Caddy 或修改代理配置。没有公网域名时，可通过 SSH 本地转发等安全隧道访问回环服务。
+部署只管理 `/etc/caddy/sites/sb-traffic.conf`；主 `/etc/caddy/Caddyfile` 已有覆盖该文件的 import 时不改，否则仅追加一行 import。不改已有节点站点或代理配置。其他站点已经使用相同/匹配的通配域名时拒绝部署；已有同名文件、被手工修改的托管文件、符号链接也拒绝覆盖。Caddy 服务必须使用 `/etc/caddy/Caddyfile`，systemd/OpenRC 均支持；自定义配置路径或容器 Caddy 不自动接管。系统软件源没有 Caddy 时给出错误，请按官方安装文档安装后重试。
+
+配置通过 `caddy validate` 后才应用：管理接口开启时热重载，原项目的 `admin off` 则短暂重启 Caddy（其代理站点可能短暂中断）。重复执行不会叠加 import；更换域名会替换本扩展的旧站点。更改统计监听端口后，重跑菜单 10 更新反代。轮换 token 保留域名，但需要更新 Sub-Store 中的订阅 URL。
+
+配置或服务应用失败（以及应用前 Ctrl-C）会恢复原文件；若恢复服务本身失败会明确报错。软件包安装与开机启用状态、独立统计服务的启动不回滚。HTTPS 证书/连通性检查约等候 60 秒；未通过时保留反代让 Caddy 后续重试，返回失败并标记“尚未验证”，**不会冒充公网已可用**。排查 DNS、云防火墙、80/443 占用和 Caddy 日志后再运行菜单 10。VPS 自测通过不能保证远程 Sub-Store 所在网络可访问，仍应从该环境实际刷新订阅。
+
+### 本机服务与手动配置
+
+统计服务仍仅监听 `127.0.0.1:<port>`（默认 18080），公网只通过 HTTPS 反代访问。`url` 在配置域名后显示公网地址，未配置时明确警告仅为本机地址；`url --local` 始终输出回环地址。地址中的 token 是 bearer 凭据，请勿公开。HTTP 只提供 token 路径下 GET/HEAD，错误 token/路径返回 404；请求只读缓存，不执行 shell；导出失败或缓存超过 125 秒返回 503。采样及节点导出通常每 60 秒刷新；轮换 token 通常约 1 秒、导出阻塞时约 61 秒生效。紧急撤销请依次 disable、rotate-token、enable。
+
+菜单 8 / `caddy-config` 仍可只打印配置片段，供高级用户手动集成，不会自动保存公网域名。自动部署的 Caddy 站点不包含 token，仅转发 `/sub/*`，其他路径返回 404。不要将回环 token 服务直接暴露成公网明文 HTTP。
 
 ## 服务、卸载和回滚
 
@@ -114,6 +115,8 @@ sudo sb-traffic uninstall --purge   # 显式删除扩展数据和 token
 ```
 
 systemd/OpenRC 操作失败返回非零。扩展卸载不会卸载或修改 sing-box；主项目卸载也不会自动清理本扩展。**移除主项目或其配置前，应先 `sb-traffic disable`；若以后不再使用扩展，再单独卸载它。**更新前可备份 `/etc/sing-box-traffic`（目录 0700，状态和锁 0600，包含 token）。回滚时重新运行此前版本扩展的 `install.sh`；默认卸载不删数据。`--purge` 不可恢复。
+
+扩展卸载不会卸载共享 Caddy，也不会自动删除反代站点。若曾通过菜单 10 部署，停用/卸载后该入口会不可用；永久移除时请自行删除 `/etc/caddy/sites/sb-traffic.conf` 及主配置里仅为此文件追加的 import，并验证、重载/重启 Caddy。不要删除其他站点的 import。
 
 ## 本地测试
 
@@ -132,5 +135,10 @@ PATH=/opt/homebrew/bin:$PATH PYTHONDONTWRITEBYTECODE=1 TMPDIR="$PI_SCRATCH_DIR" 
 ```
 
 集成测试 source 仓库内实际 `src/core.sh`，用临时配置验证 VMess、VLESS Reality、Hysteria2、TUIC、Trojan、SS2022、AnyTLS、Socks、IPv6、Caddy 非标准端口和逐配置隔离。systemd/OpenRC 的安装与生命周期通过 mock 命令和临时根目录检查，不会调用宿主服务管理器。
+
+可选的真实 Caddy 配置校验（不会启动服务器、申请公网证书或改宿主服务）：
+```sh
+SB_TRAFFIC_CADDY_TEST_BIN=/实际/caddy/路径 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s extras/vps-traffic/tests -p test_publish.py -v
+```
 
 未在真实 VPS、真实 systemd/OpenRC 守护进程、公网 HTTPS/Caddy 或真实 Sub-Store/客户端上部署验证；这也不能验证服务商账单计量口径。适配器耦合上游 `core.sh` 字段/函数，未来上游接口变化可能需要兼容性维护；本扩展不承诺永远无冲突或免维护。

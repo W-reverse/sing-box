@@ -4,7 +4,7 @@
 
 # 本 fork 的改动
 
-本仓库是 [233boy/sing-box](https://github.com/233boy/sing-box) 的 fork，在上游基础上增加了可选的**流量统计扩展**（`sb-traffic`：按 VPS 计量额度、节点名显示剩余流量、提供本地订阅地址）。
+本仓库是 [233boy/sing-box](https://github.com/233boy/sing-box) 的 fork，在上游基础上增加了可选的**流量统计扩展**（`sb-traffic`：按 VPS 计量额度、节点名显示剩余流量，并在交互菜单输入域名后自动配置 Caddy HTTPS 订阅反代）。
 
 安装命令与上游用法一致，脚本代码从本 fork 的 release 获取：
 
@@ -27,6 +27,8 @@ bash /etc/sing-box/sh/extras/vps-traffic/install.sh
 | `src/init.sh` | 同步 `is_sh_repo`，使 `sing-box update sh` 从本 fork 获取脚本 |
 
 其余代码、配置与上游一致。扩展的用法与限制详见 `extras/vps-traffic/README.md`。
+
+流量子菜单的 **10. 配置订阅域名** 只需输入独立子域名，即可复用/安装 Caddy、部署反代并输出远程 Sub-Store 可用的 HTTPS 地址。前提是域名直连解析到 VPS 且证书验证端口 80/443 可访问。已有 `admin off` 的 Caddy 会短暂重启；DNS/证书未通过检查时会明确提示，不宣称公网已可用。
 
 > 发布新版本：`is_sh_ver`（`sing-box.sh`）同时是 release 的 tag，推送后由 `.github/workflows/release.yml` 自动打包发布；要让 `sing-box update sh` 能识别到新版本，需先把 `is_sh_ver` 抬高一档再推送。
 
